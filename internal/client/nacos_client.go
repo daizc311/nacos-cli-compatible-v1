@@ -644,10 +644,14 @@ func (c *NacosClient) listConfigsV1(dataID, groupName, namespace string, pageNo,
 	return &configList, nil
 }
 
-// GetConfig retrieves a specific configuration using v3 client API
+// GetConfig retrieves a specific configuration using v3 or v1 API based on login version
 func (c *NacosClient) GetConfig(dataID, group string) (string, error) {
 	if err := c.EnsureTokenValid(); err != nil {
 		return "", err
+	}
+
+	if c.authLoginVersion == "v1" {
+		return c.getConfigV1(dataID, group)
 	}
 
 	ns := c.Namespace
@@ -704,11 +708,51 @@ func (c *NacosClient) GetConfig(dataID, group string) (string, error) {
 	return config.Content, nil
 }
 
-// PublishConfig publishes a configuration
+// getConfigV1 retrieves a configuration using Nacos v1 API
+func (c *NacosClient) getConfigV1(dataID, group string) (string, error) {
+	if err := c.EnsureTokenValid(); err != nil {
+		return "", err
+	}
+	params := url.Values{}
+	params.Set("dataId", dataID)
+	params.Set("group", group)
+
+	if c.Namespace != "" {
+		params.Set("tenant", c.Namespace)
+	}
+
+	if c.AuthType == AuthTypeNacos && c.AccessToken != "" {
+		params.Set("accessToken", c.AccessToken)
+	}
+
+	v1URL := fmt.Sprintf("%s/nacos/v1/cs/configs", c.BaseURL())
+	resp, err := c.doWithStsRetry(func() (*resty.Response, error) {
+		req := c.httpClient.R().SetQueryString(params.Encode())
+		c.setSpasHeaders(req, c.Namespace, group)
+		return req.Get(v1URL)
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("v1 request failed: %w", err)
+	}
+
+	if resp.StatusCode() != 200 {
+		return "", ParseHTTPError(resp.StatusCode(), resp.Body(), "get config (v1)")
+	}
+
+	return string(resp.Body()), nil
+}
+
+// PublishConfig publishes a configuration using v3 or v1 API based on login version
 func (c *NacosClient) PublishConfig(dataID, group, content string) error {
 	if err := c.EnsureTokenValid(); err != nil {
 		return err
 	}
+
+	if c.authLoginVersion == "v1" {
+		return c.publishConfigV1(dataID, group, content)
+	}
+
 	params := map[string]string{
 		"dataId":    dataID,
 		"groupName": group,
@@ -756,4 +800,48 @@ func (c *NacosClient) PublishConfig(dataID, group, content string) error {
 	}
 
 	return nil
+}
+
+// publishConfigV1 publishes a configuration using Nacos v1 API
+func (c *NacosClient) publishConfigV1(dataID, group, content string) error {
+	if err := c.EnsureTokenValid(); err != nil {
+		return err
+	}
+	params := map[string]string{
+		"dataId":  dataID,
+		"group":   group,
+		"content": content,
+	}
+
+	if c.Namespace != "" {
+		params["tenant"] = c.Namespace
+	}
+
+	if c.AuthType == AuthTypeNacos && c.AccessToken != "" {
+		params["accessToken"] = c.AccessToken
+	}
+
+	v1URL := fmt.Sprintf("%s/nacos/v1/cs/configs", c.BaseURL())
+	resp, err := c.doWithStsRetry(func() (*resty.Response, error) {
+		req := c.httpClient.R().SetFormData(params)
+		c.setSpasHeaders(req, c.Namespace, group)
+		return req.Post(v1URL)
+	})
+
+	if err != nil {
+		return fmt.Errorf("v1 request failed: %w", err)
+	}
+
+	if resp.StatusCode() != 200 {
+		return ParseHTTPError(resp.StatusCode(), resp.Body(), "publish config (v1)")
+	}
+
+	body := string(resp.Body())
+	if body == "true" {
+		return nil
+	}
+	if body == "false" {
+		return fmt.Errorf("publish config failed: server returned false")
+	}
+	return fmt.Errorf("publish config failed: invalid response format: %s", body)
 }
