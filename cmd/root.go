@@ -299,14 +299,24 @@ func isCommandLineStsAuthType(value string) bool {
 	return client.IsStsAuthType(authType)
 }
 
+// cliVersion is the nacos-cli release version. It follows the upstream
+// version injected from main.go and stays independent of KPVersion.
+var cliVersion = "dev"
+
 // SetVersionInfo sets the version information for the root command.
 // Called from main.go with values injected via ldflags.
+// The detailed version keeps the upstream nacos-cli version and appends the kp version.
 func SetVersionInfo(version, commit, date string) {
-	rootCmd.Version = fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date)
+	cliVersion = version
+	rootCmd.Version = fmt.Sprintf("%s (commit: %s, built: %s) kp %s", version, commit, date, KPVersion)
 	rootCmd.InitDefaultVersionFlag()
 	if flag := rootCmd.Flags().Lookup("version"); flag != nil {
 		flag.Shorthand = "v"
 	}
+}
+
+func helpVersionLine() string {
+	return fmt.Sprintf("nacos-cli version: %s  kp version: %s", cliVersion, KPVersion)
 }
 
 // Execute runs the root command
@@ -348,6 +358,12 @@ func stsAuthEnvNames(authType string) (string, string) {
 }
 
 func init() {
+	defaultHelp := rootCmd.HelpFunc()
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), helpVersionLine())
+		defaultHelp(cmd, args)
+	})
+
 	// Global flags - new style
 	rootCmd.PersistentFlags().StringVar(&host, "host", "", "Nacos server host (default: market.hiclaw.io)")
 	rootCmd.PersistentFlags().IntVar(&port, "port", 0, "Nacos server port (default: 8848 when used with --host)")

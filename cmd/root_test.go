@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/nacos-group/nacos-cli/internal/client"
@@ -10,6 +12,40 @@ import (
 	"github.com/nacos-group/nacos-cli/internal/skill"
 	"github.com/spf13/cobra"
 )
+
+func TestHelpFirstLineShowsNacosAndKPVersions(t *testing.T) {
+	originalVersion := cliVersion
+	originalDetailed := rootCmd.Version
+	originalOut := rootCmd.OutOrStdout()
+	originalErr := rootCmd.ErrOrStderr()
+	t.Cleanup(func() {
+		cliVersion = originalVersion
+		rootCmd.Version = originalDetailed
+		rootCmd.SetOut(originalOut)
+		rootCmd.SetErr(originalErr)
+	})
+
+	SetVersionInfo("v1.2.3", "abc123", "2026-01-02")
+	wantDetailed := "v1.2.3 (commit: abc123, built: 2026-01-02) kp 1.0.0"
+	if rootCmd.Version != wantDetailed {
+		t.Fatalf("detailed version = %q, want %q", rootCmd.Version, wantDetailed)
+	}
+	if KPVersion != "1.0.0" {
+		t.Fatalf("KPVersion = %q, want %q", KPVersion, "1.0.0")
+	}
+
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+	if err := rootCmd.Help(); err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := strings.Cut(buf.String(), "\n")
+	wantFirst := "nacos-cli version: v1.2.3  kp version: 1.0.0"
+	if first != wantFirst {
+		t.Fatalf("help first line = %q, want %q", first, wantFirst)
+	}
+}
 
 func TestPersistentPreRunUsesNacosEnvConfig(t *testing.T) {
 	resetRootConfigForTest(t)
